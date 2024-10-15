@@ -1,3 +1,33 @@
+/*
+  This implementation focuses specifically on lowering the ONNX Col2Im operation to its Torch equivalent, with explicit support for 5D tensors.
+  Here are the key aspects of this implementation:
+
+1. Input Handling:
+   - Expects a 3D input tensor (C * D * H * W, N * oD * oH, oW) as per ONNX specification.
+   - The output shape is provided as a separate tensor operand, which is expected to be 5D.
+
+2. Attribute Validation:
+   - Validates that blockShape, dilations, and strides have 3 elements each (for D, H, W).
+   - Validates that pads has 6 elements (start and end padding for D, H, W).
+
+3. Tensor Reshaping:
+   - Reshapes the input from (C * D * H * W, N * oD * oH, oW) to (N, C * D * H * W, oD * oH, oW).
+   - This step is necessary to match the expected input format of Torch's Col2Im operation.
+
+4. Torch Operation Creation:
+   - Creates a constant tensor for blockShape using Torch::ConstantOp.
+   - Uses Torch::AtenCol2ImOp for the actual Col2Im operation, which supports 5D tensors.
+
+5. Flexible Output Shape:
+   - The output shape is set to (-1, -1, -1, -1, -1), allowing for dynamic shape inference in Torch.
+
+6. ONNX to Torch Mapping:
+   - Maps the ONNX Col2Im operation directly to its Torch equivalent, maintaining the semantics of the operation while adapting to Torch's specific requirements.
+
+This implementation provides a clear lowering strategy from the ONNX Col2Im operation to its Torch equivalent, with explicit support for 5D tensors.
+It handles the necessary reshaping and attribute conversions to ensure compatibility between the ONNX and Torch versions of the operation.
+*/
+
 LogicalResult col2imONNXToTorchLowering(OpBinder binder, ConversionPatternRewriter &rewriter) {
   // Tensor operands
   Value input, outputShape;
