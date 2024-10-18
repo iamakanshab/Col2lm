@@ -1,0 +1,101 @@
+#include <torch/torch.h>
+#include <iostream>
+
+class Adaptive5DWindowOperation : public torch::nn::Module {
+public:
+    Adaptive5DWindowOperation(std::string operation_type = "sum", bool use_transpose = false)
+        : operation_type_(operation_type), use_transpose_(use_transpose) {}
+
+    torch::Tensor forward(torch::Tensor input, 
+                          std::vector<int64_t> kernel_size,
+                          std::vector<int64_t> stride,
+                          std::vector<int64_t> padding,
+                          c10::optional<std::vector<int64_t>> output_size = c10::nullopt) {
+        auto batch_size = input.size(0);
+        auto channels = input.size(1);
+
+        if (use_transpose_) {
+            if (!output_size.has_value()) {
+                throw std::runtime_error("output_size must be specified for transpose operations");
+            }
+            return transpose_operation(input, kernel_size, stride, padding, output_size.value());
+        } else {
+            return forward_operation(input, kernel_size, stride, padding);
+        }
+    }
+
+private:
+    std::string operation_type_;
+    bool use_transpose_;
+
+    torch::Tensor forward_operation(torch::Tensor input,
+                                    const std::vector<int64_t>& kernel_size,
+                                    const std::vector<int64_t>& stride,
+                                    const std::vector<int64_t>& padding) {
+        torch::Tensor kernel;
+        if (operation_type_ == "sum") {
+            kernel = torch::ones({1, 1, kernel_size[0], kernel_size[1], kernel_size[2]}, input.options());
+        } else if (operation_type_ == "average") {
+            auto kernel_product = std::accumulate(kernel_size.begin(), kernel_size.end(), 1, std::multiplies<int64_t>());
+            kernel = torch::ones({1, 1, kernel_size[0], kernel_size[1], kernel_size[2]}, input.options()) / kernel_product;
+        } else {
+            throw std::runtime_error("Unsupported operation type: " + operation_type_);
+        }
+
+        std::vector<torch::Tensor> outputs;
+        for (int64_t c = 0; c < input.size(1); ++c) {
+            auto channel_input = input.slice(1, c, c + 1);
+            auto channel_output = torch::conv3d(channel_input, kernel, {}, stride, padding);
+            outputs.push_back(channel_output);
+        }
+
+        return torch::cat(outputs, 1);
+    }
+
+    torch::Tensor transpose_operation(torch::Tensor input,
+                                      const std::vector<int64_t>& kernel_size,
+                                      const std::vector<int64_t>& stride,
+                                      const std::vector<int64_t>& padding,
+                                      const std::vector<int64_t>& output_size) {
+        torch::Tensor kernel;
+        if (operation_type_ == "sum") {
+            kernel = torch::ones({1, 1, kernel_size[0], kernel_size[1], kernel_size[2]}, input.options());
+        } else if (operation_type_ == "average") {
+            auto kernel_product = std::accumulate(kernel_size.begin(), kernel_size.end(), 1, std::multiplies<int64_t>());
+            kernel = torch::ones({1, 1, kernel_size[0], kernel_size[1], kernel_size[2]}, input.options()) * kernel_product;
+        } else {
+            throw std::runtime_error("Unsupported operation type: " + operation_type_);
+        }
+
+        std::vector<torch::Tensor> outputs;
+        for (int64_t c = 0; c < input.size(1); ++c) {
+            auto channel_input = input.slice(1, c, c + 1);
+            auto channel_output = torch::conv_transpose3d(channel_input, kernel, {}, stride, padding, {0, 0, 0}, 1, 
+                                                          {output_size[2], output_size[3], output_size[4]});
+            outputs.push_back(channel_output);
+        }
+
+        return torch::cat(outputs, 1);
+    }
+};
+
+int main() {
+    // Example usage
+    auto input_5d = torch::randn({2, 3, 16, 32, 32});
+    std::vector<int64_t> kernel_size = {3, 3, 3};
+    std::vector<int64_t> stride = {2, 2, 2};
+    std::vector<int64_t> padding = {1, 1, 1};
+
+    // Forward operation (e.g., for pooling or strided convolution)
+    auto forward_op = Adaptive5DWindowOperation("sum", false);
+    auto forward_output = forward_op.forward(input_5d, kernel_size, stride, padding);
+    std::cout << "Forward output shape: " << forward_output.sizes() << std::endl;
+
+    // Transpose operation (e.g., for unpooling or transpose convolution)
+    auto transpose_op = Adaptive5DWindowOperation("sum", true);
+    std::vector<int64_t> output_size = {2, 3, 16, 32, 32};  // Original input size for this example
+    auto transpose_output = transpose_op.forward(forward_output, kernel_size, stride, padding, output_size);
+    std::cout << "Transpose output shape: " << transpose_output.sizes() << std::endl;
+
+    return 0;
+}
